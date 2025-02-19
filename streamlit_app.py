@@ -84,8 +84,8 @@ if creds_file is not None and st.session_state.vertex_client:
                         user_prompt_data=prompt_data,
                     )
                     response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
-                    with st.container(height=300, border=False):
-                        with st.expander("Sanitised prompt request", expanded=True):
+                    with st.expander("Sanitised prompt request", expanded=True):
+                        with st.container(height=300, border=False):
                             st.write(response)
                 except Exception as e:
                     st.error(f"Model Armor error: {e}")
@@ -110,8 +110,8 @@ if creds_file is not None and st.session_state.vertex_client:
                         model_response_data=model_data,
                     )
                     response = st.session_state.model_armor_client.sanitize_model_response(request=request)
-                    with st.container(height=300, border=False):
-                        with st.expander("Sanitised model response", expanded=True):
+                    with st.expander("Sanitised model response", expanded=True):
+                        with st.container(height=300, border=False):
                             st.write(response)
                 except Exception as e:
                     st.error(f"Model Armor error: {e}")
