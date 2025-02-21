@@ -66,6 +66,9 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+def get_match_state_message(match_state):
+    return "No Match Found ✅" if match_state == 1 else "Match Found 🚨" if match_state == 2 else "Unknown"
+
 # User-Assistant chat interaction
 if creds_file is not None and st.session_state.vertex_client:
     if prompt := st.chat_input("Ask anything"):
@@ -74,21 +77,41 @@ if creds_file is not None and st.session_state.vertex_client:
             st.session_state.messages.append({"role": "user", "content": prompt})
             
         if sanitize_request != "None":
-            with st.spinner("Analysing prompt request..."):
-                try:
-                    template_id = template_options[sanitize_request]
-                    prompt_data = modelarmor_v1.DataItem()
-                    prompt_data.text = prompt
-                    request = modelarmor_v1.SanitizeUserPromptRequest(
-                        name=f"projects/{gcp_project_id}/locations/{gcp_location}/templates/{template_id}",
-                        user_prompt_data=prompt_data,
-                    )
-                    response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
-                    with st.expander("Sanitised prompt request", expanded=True):
-                        with st.container(height=300, border=False):
+            try:
+                template_id = template_options[sanitize_request]
+                prompt_data = modelarmor_v1.DataItem()
+                prompt_data.text = prompt
+                request = modelarmor_v1.SanitizeUserPromptRequest(
+                    name=f"projects/{gcp_project_id}/locations/{gcp_location}/templates/{template_id}",
+                    user_prompt_data=prompt_data,
+                )
+                response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
+                
+                if response.sanitization_result.filter_match_state == 2:
+                    with st.container(border=True):
+                        sdp_match_state = response.sanitization_result.filter_results["sdp"].sdp_filter_result.inspect_result.match_state
+                        pi_and_jailbreak_match_state = response.sanitization_result.filter_results["pi_and_jailbreak"].pi_and_jailbreak_filter_result.match_state
+                        malicious_uris_match_state = response.sanitization_result.filter_results["malicious_uris"].malicious_uri_filter_result.match_state
+                        rai_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.match_state
+                        rai_sexually_explicit_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["sexually_explicit"].match_state
+                        rai_hate_speech_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["hate_speech"].match_state
+                        rai_harassment_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["harassment"].match_state
+                        rai_dangerous_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["dangerous"].match_state
+
+                        st.write(f"**Sensitive Data Protection**: {get_match_state_message(sdp_match_state)}")
+                        st.write(f"**Prompt Injection and Jailbreak**: {get_match_state_message(pi_and_jailbreak_match_state)}")
+                        st.write(f"**Malicious URIs**: {get_match_state_message(malicious_uris_match_state)}")
+                        st.write(f"**Responsible AI**: {get_match_state_message(rai_match_state)}")
+                        st.write(f"* **Sexually Explicit**: {get_match_state_message(rai_sexually_explicit_match_state)}")
+                        st.write(f"* **Hate Speech**: {get_match_state_message(rai_hate_speech_match_state)}")
+                        st.write(f"* **Harassment**: {get_match_state_message(rai_harassment_match_state)}")
+                        st.write(f"* **Dangerous**: {get_match_state_message(rai_dangerous_match_state)}")
+                    with st.expander("Sanitised prompt request (raw)", expanded=False):
+                        with st.container(height=300, border=True):
                             st.write(response)
-                except Exception as e:
-                    st.error(f"Model Armor error: {e}")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Model Armor error: {e}")
 
         # Assistant response
         with st.chat_message("assistant"):
@@ -110,8 +133,29 @@ if creds_file is not None and st.session_state.vertex_client:
                         model_response_data=model_data,
                     )
                     response = st.session_state.model_armor_client.sanitize_model_response(request=request)
-                    with st.expander("Sanitised model response", expanded=True):
-                        with st.container(height=300, border=False):
-                            st.write(response)
+                    
+                    if response.sanitization_result.filter_match_state == 2:
+                        with st.container(border=True):
+                            sdp_match_state = response.sanitization_result.filter_results["sdp"].sdp_filter_result.inspect_result.match_state
+                            pi_and_jailbreak_match_state = response.sanitization_result.filter_results["pi_and_jailbreak"].pi_and_jailbreak_filter_result.match_state
+                            malicious_uris_match_state = response.sanitization_result.filter_results["malicious_uris"].malicious_uri_filter_result.match_state
+                            rai_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.match_state
+                            rai_sexually_explicit_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["sexually_explicit"].match_state
+                            rai_hate_speech_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["hate_speech"].match_state
+                            rai_harassment_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["harassment"].match_state
+                            rai_dangerous_match_state = response.sanitization_result.filter_results["rai"].rai_filter_result.rai_filter_type_results["dangerous"].match_state
+
+                            st.write(f"**Sensitive Data Protection**: {get_match_state_message(sdp_match_state)}")
+                            st.write(f"**Prompt Injection and Jailbreak**: {get_match_state_message(pi_and_jailbreak_match_state)}")
+                            st.write(f"**Malicious URIs**: {get_match_state_message(malicious_uris_match_state)}")
+                            st.write(f"**Responsible AI**: {get_match_state_message(rai_match_state)}")
+                            st.write(f"* **Sexually Explicit**: {get_match_state_message(rai_sexually_explicit_match_state)}")
+                            st.write(f"* **Hate Speech**: {get_match_state_message(rai_hate_speech_match_state)}")
+                            st.write(f"* **Harassment**: {get_match_state_message(rai_harassment_match_state)}")
+                            st.write(f"* **Dangerous**: {get_match_state_message(rai_dangerous_match_state)}")
+                        with st.expander("Sanitised prompt request (raw)", expanded=False):
+                            with st.container(height=300, border=True):
+                                st.write(response)
+                        st.stop()
                 except Exception as e:
                     st.error(f"Model Armor error: {e}")
