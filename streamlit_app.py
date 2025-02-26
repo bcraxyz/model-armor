@@ -66,6 +66,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# Print readable match state message
 def get_match_state_message(match_state):
     return "No Match Found ✅" if match_state == 1 else "Match Found 🚨" if match_state == 2 else "*Not Assessed*"
 
