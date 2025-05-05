@@ -31,8 +31,8 @@ st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_s
 
 # Model Armor settings
 with st.sidebar:
-    st.header("🛡️ Model Armor Demo")
-    with st.expander("**⚙️ Model Settings**", expanded=True):
+    st.title("🛡️ Model Armor Demo")
+    with st.expander("**⚙️ Model Settings**", expanded=False):
         model_option = st.selectbox("Model", list(model_options.keys()))
         model = model_options[model_option]    
         creds_file = st.file_uploader("Google Cloud credentials file", type="json") 
