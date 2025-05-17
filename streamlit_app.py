@@ -1,16 +1,7 @@
 import os, vertexai, streamlit as st
 import vertexai.generative_models as genai
 from google.cloud import modelarmor_v1
-
-# Google Cloud & Gemini settings
-gcp_project_id = os.getenv("PROJECT_ID")
-gcp_location = os.getenv("LOCATION", "us-central1")
-gcp_ma_endpoint = os.getenv("MA_ENDPOINT", "modelarmor.us-central1.rep.googleapis.com")
-
-model_options = {
-    "Gemini 1.5 Flash": "gemini-1.5-flash",
-    "Gemini 2.0 Flash": "gemini-2.0-flash"
-}
+from openai import OpenAI
 
 # Ensure the following Model Armor templates are available in the specified Google Cloud project
 # "None": "none"
@@ -26,6 +17,31 @@ model_options = {
 # "Responsible AI - medium and above": "ma-rai-med"
 # "Responsible AI - low and above": "ma-rai-low"
 
+# Google Cloud & Gemini settings
+GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+MODEL_ARMOR_ENDPOINT = os.getenv("MODEL_ARMOR_ENDPOINT", "modelarmor.us-central1.rep.googleapis.com")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not GOOGLE_CLOUD_PROJECT_ID:
+    raise EnvironmentError("GOOGLE_CLOUD_PROJECT_ID  must be set when using Vertex AI.")
+
+model_options = {
+    "Gemini 1.5 Flash": "gemini-1.5-flash",
+    "Gemini 2.0 Flash": "gemini-2.0-flash",
+    "GPT-4o mini": "gpt-4o-mini"
+}
+
+model_provider = {
+    "gemini-1.5-flash": "Vertex AI",
+    "gemini-2.0-flash": "Vertex AI",
+    "gpt-4o-mini": "OpenAI"
+}
+
+# Initialise session state for Open AI key
+if "openai_api_key" not in st.session_state :
+    st.session_state.openai_api_key = ""
+
 # Streamlit app config
 st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_sidebar_state="auto")
 
@@ -36,6 +52,14 @@ with st.sidebar:
         model_option = st.selectbox("Model", list(model_options.keys()))
         model = model_options[model_option]    
         creds_file = st.file_uploader("Google Cloud credentials file", type="json") 
+
+        if model_provider[model] == "OpenAI":
+            openai_api_key = st.text_input("OpenAI API key", type="password", value=st.session_state.openai_api_key)
+            if openai_api_key != st.session_state.openai_api_key:
+                st.session_state.openai_api_key = openai_api_key
+                # Force re-initialization by removing the old client
+                if "openai_client" in st.session_state:
+                    del st.session_state.openai_client
     
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
         detection_type = None
@@ -98,24 +122,52 @@ with st.sidebar:
         # groq_api_key = st.text_input("Groq API key", type="password", help="Get your API key [here](https://console.groq.com/keys).")
 
 # Cache credentials to avoid unnecessary writes
-if creds_file is not None and "google_creds" not in st.session_state:
-    creds_contents = creds_file.read().decode("utf-8")
-    st.session_state.google_creds = creds_contents  # Store creds in session state
-    with open("temp_credentials.json", "w") as f:
-        f.write(creds_contents)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "temp_credentials.json"
-
-# Initialise Vertex AI and Model Armor only if credentials exist
 if creds_file is not None:
-    if "vertex_client" not in st.session_state:
-        vertexai.init(project=gcp_project_id, location=gcp_location)
-        st.session_state.vertex_client = genai.GenerativeModel(model)
-    
+    creds_contents = creds_file.read().decode("utf-8")
+    if creds_contents != st.session_state.get("google_creds"):
+        st.session_state.google_creds = creds_contents  # Store creds in session state
+        with open("temp_credentials.json", "w") as f:
+            f.write(creds_contents)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "temp_credentials.json"
+
+        # If creds change, clients might need re-init
+        if "vertex_client" in st.session_state: 
+            del st.session_state.vertex_client
+        if "model_armor_client" in st.session_state: 
+            del st.session_state.model_armor_client
+
+# Initialise Vertex AI and Model Armor clients if credentials exist in session state
+if "google_creds" in st.session_state:
+    vertex_model = st.session_state.get("vertex_model")
+    if "vertex_client" not in st.session_state or vertex_model != model:
+        try:
+            vertexai.init(project=GOOGLE_CLOUD_PROJECT_ID, location=GOOGLE_CLOUD_LOCATION)
+            st.session_state.vertex_client = genai.GenerativeModel(model)
+            st.session_state.vertex_model = model
+        except Exception as e:
+            st.error(f"Failed to initialize Vertex AI client: {e}")
+            st.stop()
+
     if "model_armor_client" not in st.session_state:
-        st.session_state.model_armor_client = modelarmor_v1.ModelArmorClient(
-            transport="rest",
-            client_options={"api_endpoint": gcp_ma_endpoint},
-        )
+        try:
+            st.session_state.model_armor_client = modelarmor_v1.ModelArmorClient(
+                transport="rest",
+                client_options={"api_endpoint": MODEL_ARMOR_ENDPOINT},
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize Model Armor client: {e}")
+            st.stop()
+
+# Initialise OpenAI client if API key available
+if model_provider[model] == "OpenAI":
+    if st.session_state.openai_api_key:
+        current_openai_api_key = getattr(st.session_state.get("openai_client"), 'api_key', None)
+        if "openai_client" not in st.session_state or (current_openai_api_key != st.session_state.openai_api_key):
+            try:
+                st.session_state.openai_client = OpenAI(api_key=st.session_state.openai_api_key)
+            except Exception as e:
+                st.error(f"Failed to initialize OpenAI client: {e}")
+                st.stop()
 
 # Initialise session state for model and messages
 if "messages" not in st.session_state:
@@ -165,8 +217,10 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # User-Assistant chat interaction
-if creds_file is not None and st.session_state.vertex_client:
-    if prompt := st.chat_input("Ask anything"):
+if prompt := st.chat_input("Ask anything"):
+    if not creds_file:
+        st.error("Please upload the Google Cloud credentials file")
+    else:
         with st.chat_message("user"):
             st.markdown(prompt)
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -175,7 +229,7 @@ if creds_file is not None and st.session_state.vertex_client:
             try:
                 prompt_data = modelarmor_v1.DataItem(text=prompt)
                 request = modelarmor_v1.SanitizeUserPromptRequest(
-                    name=f"projects/{gcp_project_id}/locations/{gcp_location}/templates/{template_id}",
+                    name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{template_id}",
                     user_prompt_data=prompt_data,
                 )
                 response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
@@ -192,20 +246,37 @@ if creds_file is not None and st.session_state.vertex_client:
 
         # Assistant response
         with st.chat_message("assistant"):
-            try:
-                model_response = st.session_state.vertex_client.generate_content(prompt)
-                st.write(model_response.text)
-                st.session_state.messages.append({"role": "assistant", "content": model_response.text})
-            except Exception as e:
-                st.error(f"Vertex AI error: {e}")
+            if model_provider[model] == "Vertex AI":
+                try:
+                    response = st.session_state.vertex_client.generate_content(prompt)
+                    model_response = response.text
+                except Exception as e:
+                    st.error(f"Vertex AI error: {e}")
+            elif model_provider[model] == "OpenAI":
+                if not openai_api_key:
+                    st.error("Please provide your OpenAI API key.")
+                    st.stop()
+                
+                try:
+                    response = st.session_state.openai_client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    model_response = response.choices[0].message.content
+                except Exception as e:
+                    st.error(f"OpenAI error: {e}")
+                    st.stop()
+
+            st.markdown(model_response)
+            st.session_state.messages.append({"role": "assistant", "content": model_response})
 
         if sanitize_response:
             with st.spinner("Analysing model response..."):
                 try:
                     template_id = "ma-all-low"
-                    model_data = modelarmor_v1.DataItem(text=model_response.text)
+                    model_data = modelarmor_v1.DataItem(text=model_response)
                     request = modelarmor_v1.SanitizeModelResponseRequest(
-                        name=f"projects/{gcp_project_id}/locations/{gcp_location}/templates/{template_id}",
+                        name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{template_id}",
                         model_response_data=model_data,
                     )
                     response = st.session_state.model_armor_client.sanitize_model_response(request=request)
