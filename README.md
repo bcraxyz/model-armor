@@ -3,7 +3,8 @@ A Streamlit chatbot for testing Google Cloud Model Armor LLM safety and security
 
 ### Features
 
-- Supports Gemini 1.5/2.0 Flash models via Vertex AI (for now); two modes of deployment:
+- Supports `gemini-1.5-flash` and `gemini-2.0-flash` models via Vertex AI, and `gpt-4o-mini` model via OpenAI
+- Supports two modes of deployment:
   - `cloud_run.py`: For deployment on Google Cloud Run, will use Application Default Credentials
   - `streamlit_app.py`: For off-Google Cloud deployment, requires Google Cloud service account credentials
 - Enable **prompt sanitization**, with optional **response sanitization**, for the following detection types
@@ -27,9 +28,10 @@ A Streamlit chatbot for testing Google Cloud Model Armor LLM safety and security
 
 2. Environment variables required:
 
-    - `PROJECT_ID`: Google Cloud project ID
-    - `LOCATION`: Google Cloud location (default: `us-central1`)
-    - `MA_ENDPOINT`: Model Armor endpoint (default: `modelarmor.us-central1.rep.googleapis.com`)
+    - `GOOGLE_CLOUD_PROJECT_ID`: Google Cloud project ID
+    - `GOOGLE_CLOUD_LOCATION`: Google Cloud location (default: `us-central1`)
+    - `MODEL_ARMOR_ENDPOINT`: Model Armor endpoint (default: `modelarmor.us-central1.rep.googleapis.com`)
+    - `OPENAI_API_KEY` (optional): OpenAI API key (if you intend to use both model providers)
 
 3. Prepare Model Armor templates in your Google Cloud project:
 
