@@ -17,7 +17,7 @@ from openai import OpenAI
 # "Responsible AI - medium and above": "ma-rai-med"
 # "Responsible AI - low and above": "ma-rai-low"
 
-# Google Cloud & Gemini settings
+# Google Cloud, Vertex AI & OpenAI settings
 GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
 GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 MODEL_ARMOR_ENDPOINT = os.getenv("MODEL_ARMOR_ENDPOINT", "modelarmor.us-central1.rep.googleapis.com")
@@ -38,7 +38,7 @@ model_provider = {
     "gpt-4o-mini": "OpenAI"
 }
 
-# Initialise session state for Open AI key
+# Initialise session state for OpenAI API key
 if "openai_api_key" not in st.session_state :
     st.session_state.openai_api_key = ""
 
@@ -54,12 +54,15 @@ with st.sidebar:
         creds_file = st.file_uploader("Google Cloud credentials file", type="json") 
 
         if model_provider[model] == "OpenAI":
-            openai_api_key = st.text_input("OpenAI API key", type="password", value=st.session_state.openai_api_key)
-            if openai_api_key != st.session_state.openai_api_key:
-                st.session_state.openai_api_key = openai_api_key
-                # Force re-initialization by removing the old client
-                if "openai_client" in st.session_state:
-                    del st.session_state.openai_client
+            if not OPENAI_API_KEY:
+                openai_api_key = st.text_input("OpenAI API key", type="password", value=st.session_state.openai_api_key)
+                if openai_api_key != st.session_state.openai_api_key:
+                    st.session_state.openai_api_key = openai_api_key
+                    # Force re-initialization by removing the old client
+                    if "openai_client" in st.session_state:
+                        del st.session_state.openai_client
+            else:
+                st.session_state.openai_api_key = OPENAI_API_KEY
     
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
         detection_type = None
@@ -90,30 +93,30 @@ with st.sidebar:
 
         # Map detection_type and confidence_level to templates
         if detection_type == "Malicious URLs":
-            template_id = "ma-mal-url"
+            TEMPLATE_ID = "ma-mal-url"
         elif detection_type == "Sensitive data protection":
-            template_id = "ma-sdp-basic"
+            TEMPLATE_ID = "ma-sdp-basic"
         elif detection_type == "Prompt injection and jailbreak":
             if confidence_level == "High only":
-                template_id = "ma-pijb-high"
+                TEMPLATE_ID = "ma-pijb-high"
             elif confidence_level == "Medium and above":
-                template_id = "ma-pijb-med"
+                TEMPLATE_ID = "ma-pijb-med"
             elif confidence_level == "Low and above":
-                template_id = "ma-pijb-low"
+                TEMPLATE_ID = "ma-pijb-low"
         elif detection_type == "Responsible AI":
             if confidence_level == "High only":
-                template_id = "ma-rai-high"
+                TEMPLATE_ID = "ma-rai-high"
             elif confidence_level == "Medium and above":
-                template_id = "ma-rai-med"
+                TEMPLATE_ID = "ma-rai-med"
             elif confidence_level == "Low and above":
-                template_id = "ma-rai-low"
+                TEMPLATE_ID = "ma-rai-low"
         elif detection_type == "All of the above":
             if confidence_level == "High only":
-                template_id = "ma-all-high"
+                TEMPLATE_ID = "ma-all-high"
             elif confidence_level == "Medium and above":
-                template_id = "ma-all-med"
+                TEMPLATE_ID = "ma-all-med"
             elif confidence_level == "Low and above":
-                template_id = "ma-all-low"
+                TEMPLATE_ID = "ma-all-low"
 
         sanitize_response = st.checkbox("Sanitize model response?", help="Uses `All - low and above` template")
 
@@ -229,7 +232,7 @@ if prompt := st.chat_input("Ask anything"):
             try:
                 prompt_data = modelarmor_v1.DataItem(text=prompt)
                 request = modelarmor_v1.SanitizeUserPromptRequest(
-                    name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{template_id}",
+                    name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{TEMPLATE_ID}",
                     user_prompt_data=prompt_data,
                 )
                 response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
@@ -253,10 +256,9 @@ if prompt := st.chat_input("Ask anything"):
                 except Exception as e:
                     st.error(f"Vertex AI error: {e}")
             elif model_provider[model] == "OpenAI":
-                if not openai_api_key:
+                if not st.session_state.openai_api_key:
                     st.error("Please provide your OpenAI API key.")
-                    st.stop()
-                
+                    st.stop() 
                 try:
                     response = st.session_state.openai_client.chat.completions.create(
                         model=model,
@@ -273,10 +275,10 @@ if prompt := st.chat_input("Ask anything"):
         if sanitize_response:
             with st.spinner("Analysing model response..."):
                 try:
-                    template_id = "ma-all-low"
+                    TEMPLATE_ID = "ma-all-low"
                     model_data = modelarmor_v1.DataItem(text=model_response)
                     request = modelarmor_v1.SanitizeModelResponseRequest(
-                        name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{template_id}",
+                        name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{TEMPLATE_ID}",
                         model_response_data=model_data,
                     )
                     response = st.session_state.model_armor_client.sanitize_model_response(request=request)
