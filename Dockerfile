@@ -1,34 +1,29 @@
-# Use the official Python slim image as a base
-FROM python:3.11-slim
+# Stage 1
+FROM python:3.12-slim AS builder
 
-# Set environment variables
+WORKDIR /install
+COPY requirements.txt .
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && pip install --upgrade pip \
+    && pip install --prefix=/install --no-cache-dir -r requirements.txt \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Stage 2
+FROM python:3.12-slim
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install necessary dependencies for building Python packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create and set the working directory
 WORKDIR /usr/src/app
 
-# Copy only the requirements file first for better caching
-COPY requirements.txt ./
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application code
+COPY --from=builder /install /usr/local
 COPY . .
 
-# Ensure the container runs as a non-root user
 RUN useradd -m appuser
 USER appuser
 
-# Expose port 8501
 EXPOSE 8501
 
-# Set the command to run the application
 CMD ["streamlit", "run", "./cloudrun_app.py", "--server.port=8501"]
