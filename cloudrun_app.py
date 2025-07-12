@@ -27,14 +27,14 @@ if not GOOGLE_CLOUD_PROJECT_ID:
     raise EnvironmentError("GOOGLE_CLOUD_PROJECT_ID  must be set when using Vertex AI.")
     
 model_options = {
-    "Gemini 1.5 Flash": "gemini-1.5-flash",
     "Gemini 2.0 Flash": "gemini-2.0-flash",
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
     "GPT-4o mini": "gpt-4o-mini"
 }
 
 model_provider = {
-    "gemini-1.5-flash": "Vertex AI",
     "gemini-2.0-flash": "Vertex AI",
+    "gemini-2.5-flash": "Vertex AI",
     "gpt-4o-mini": "OpenAI"
 }
 
