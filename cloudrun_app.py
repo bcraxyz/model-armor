@@ -1,6 +1,7 @@
 import os, vertexai, streamlit as st
 import vertexai.generative_models as genai
 from google.cloud import modelarmor_v1
+from anthropic import AnthropicVertex
 from openai import OpenAI
 
 # Ensure the following Model Armor templates are available in the specified Google Cloud project
@@ -17,31 +18,38 @@ from openai import OpenAI
 # "Responsible AI - medium and above": "ma-rai-med"
 # "Responsible AI - low and above": "ma-rai-low"
 
-# Google Cloud, Vertex AI & OpenAI settings
-GOOGLE_CLOUD_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT_ID")
-GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-MODEL_ARMOR_ENDPOINT = os.getenv("MODEL_ARMOR_ENDPOINT", "modelarmor.us-central1.rep.googleapis.com")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+model_options = [
+    {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "provider": "Google", "location": "global"},
+    {"name": "gemini-2.5-flash-lite", "display_name": "Gemini 2.5 Flash Lite", "provider": "Google", "location": "global"},
+    {"name": "claude-sonnet-4@20250514", "display_name": "Claude Sonnet 4", "provider": "Anthropic", "location": "us-east5"},
+    {"name": "gpt-4o-mini", "display_name": "GPT-4o mini", "provider": "OpenAI", "location": "global"},
+]
 
-if not GOOGLE_CLOUD_PROJECT_ID:
-    raise EnvironmentError("GOOGLE_CLOUD_PROJECT_ID  must be set when using Vertex AI.")
-    
-model_options = {
-    "Gemini 2.0 Flash": "gemini-2.0-flash",
-    "Gemini 2.5 Flash": "gemini-2.5-flash",
-    "GPT-4o mini": "gpt-4o-mini"
-}
+model_armor_endpoints = [
+    {"location": "us-central1", "endpoint": "modelarmor.us-central1.rep.googleapis.com"},
+    {"location": "asia-southeast1", "endpoint": "modelarmor.asia-southeast1.rep.googleapis.com"},
+]
 
-model_provider = {
-    "gemini-2.0-flash": "Vertex AI",
-    "gemini-2.5-flash": "Vertex AI",
-    "gpt-4o-mini": "OpenAI"
-}
-
-# Initialise session state for OpenAI API key
+# Initialise session state for for key variables
 if "openai_api_key" not in st.session_state :
-    st.session_state.openai_api_key = ""
-    
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+if "project_id" not in st.session_state:
+    st.session_state.project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "")
+if "location" not in st.session_state:
+    st.session_state.location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+if "model" not in st.session_state:
+    st.session_state.model = None
+if "endpoint" not in st.session_state:
+    st.session_state.endpoint = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+def reset_clients():
+    st.session_state.pop("vertex_client", None)
+    st.session_state.pop("anthropic_client", None)
+    st.session_state.pop("model_armor_client", None)
+    st.session_state.model = None
+
 # Streamlit app config
 st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_sidebar_state="auto")
 
@@ -49,111 +57,89 @@ st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_s
 with st.sidebar:
     st.title("🛡️ Model Armor Demo")
     with st.expander("**⚙️ Model Settings**", expanded=False):
-        model_option = st.selectbox("Model", list(model_options.keys()))
-        model = model_options[model_option]    
+        selected_model = st.selectbox("Model", options=model_options, format_func=lambda m: m["display_name"])
+        model = selected_model["name"]
+        provider = selected_model["provider"]
 
-        if model_provider[model] == "OpenAI":
-            if not OPENAI_API_KEY:
-                openai_api_key = st.text_input("OpenAI API key", type="password", value=st.session_state.openai_api_key)
-                if openai_api_key != st.session_state.openai_api_key:
-                    st.session_state.openai_api_key = openai_api_key
-                    # Force re-initialization by removing the old client
-                    if "openai_client" in st.session_state:
-                        del st.session_state.openai_client
-            else:
-                st.session_state.openai_api_key = OPENAI_API_KEY
+        if provider == "OpenAI":
+            st.text_input("**OpenAI API key**", type="password", key="openai_api_key")
     
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
-        detection_type = None
-        confidence_level = None
-        sanitize_request = st.checkbox("Sanitize prompt request?")
+        with st.expander("**⚙️ Project Settings**", expanded=True):
+            project_id = st.text_input("**Project ID**")
+            selected_location = st.selectbox("**Location**", options=model_armor_endpoints, format_func=lambda m: m["location"])
+            location = selected_location["location"]
+            endpoint = selected_location["endpoint"]
         
-        if sanitize_request:
-            detection_type = st.radio(
-                "**Detection type**",
-                [
-                    "Malicious URLs",
-                    "Sensitive data protection",
+        with st.expander("**⚙️ Detection Settings**", expanded=True):
+            detection_type = None
+            confidence_level = None
+            sanitize_request = st.checkbox("Sanitize prompt request?")
+        
+            if sanitize_request:
+                detection_type = st.radio(
+                    "**Detection type**",
+                    [
+                        "Malicious URLs",
+                        "Sensitive data protection",
+                        "Prompt injection and jailbreak",
+                        "Responsible AI",
+                        "All of the above"
+                    ]
+                )
+
+                if detection_type in [
                     "Prompt injection and jailbreak",
                     "Responsible AI",
                     "All of the above"
-                ]
-            )
+                ]:
+                    confidence_level = st.radio(
+                        "**Confidence level**",
+                        ["High only", "Medium and above", "Low and above"]
+                    )
 
-            if detection_type in [
-                "Prompt injection and jailbreak",
-                "Responsible AI",
-                "All of the above"
-            ]:
-                confidence_level = st.radio(
-                    "**Confidence level**",
-                    ["High only", "Medium and above", "Low and above"]
-                )
+            # Map detection_type and confidence_level to templates
+            if detection_type == "Malicious URLs":
+                template_id = "ma-mal-url"
+            elif detection_type == "Sensitive data protection":
+                template_id = "ma-sdp-basic"
+            elif detection_type == "Prompt injection and jailbreak":
+                if confidence_level == "High only":
+                    template_id = "ma-pijb-high"
+                elif confidence_level == "Medium and above":
+                    template_id = "ma-pijb-med"
+                elif confidence_level == "Low and above":
+                    template_id = "ma-pijb-low"
+            elif detection_type == "Responsible AI":
+                if confidence_level == "High only":
+                    template_id = "ma-rai-high"
+                elif confidence_level == "Medium and above":
+                    template_id = "ma-rai-med"
+                elif confidence_level == "Low and above":
+                    template_id = "ma-rai-low"
+            elif detection_type == "All of the above":
+                if confidence_level == "High only":
+                    template_id = "ma-all-high"
+                elif confidence_level == "Medium and above":
+                    template_id = "ma-all-med"
+                elif confidence_level == "Low and above":
+                    template_id = "ma-all-low"
 
-        # Map detection_type and confidence_level to templates
-        if detection_type == "Malicious URLs":
-            TEMPLATE_ID = "ma-mal-url"
-        elif detection_type == "Sensitive data protection":
-            TEMPLATE_ID = "ma-sdp-basic"
-        elif detection_type == "Prompt injection and jailbreak":
-            if confidence_level == "High only":
-                TEMPLATE_ID = "ma-pijb-high"
-            elif confidence_level == "Medium and above":
-                TEMPLATE_ID = "ma-pijb-med"
-            elif confidence_level == "Low and above":
-                TEMPLATE_ID = "ma-pijb-low"
-        elif detection_type == "Responsible AI":
-            if confidence_level == "High only":
-                TEMPLATE_ID = "ma-rai-high"
-            elif confidence_level == "Medium and above":
-                TEMPLATE_ID = "ma-rai-med"
-            elif confidence_level == "Low and above":
-                TEMPLATE_ID = "ma-rai-low"
-        elif detection_type == "All of the above":
-            if confidence_level == "High only":
-                TEMPLATE_ID = "ma-all-high"
-            elif confidence_level == "Medium and above":
-                TEMPLATE_ID = "ma-all-med"
-            elif confidence_level == "Low and above":
-                TEMPLATE_ID = "ma-all-low"
+            sanitize_response = st.checkbox("Sanitize model response?", help="Uses `All - low and above` template")
 
-        sanitize_response = st.checkbox("Sanitize model response?", help="Uses `All - low and above` template")
+# Check if Project ID, Location, Model or Endpoint has changed
+if project_id != st.session_state.project_id or location != st.session_state.location:
+    reset_clients()
+    st.session_state.project_id = project_id
+    st.session_state.location = location
 
-# Initialise Vertex AI and Model Armor
-vertex_model = st.session_state.get("vertex_model")
-if "vertex_client" not in st.session_state or vertex_model != model:
-    try:
-        vertexai.init(project=GOOGLE_CLOUD_PROJECT_ID, location=GOOGLE_CLOUD_LOCATION)
-        st.session_state.vertex_client = genai.GenerativeModel(model)
-        st.session_state.vertex_model = model
-    except Exception as e:
-        st.error(f"Failed to initialize Vertex AI client: {e}")
-        st.stop()
+if model != st.session_state.model:
+    reset_clients()
+    st.session_state.model = model
 
-if "model_armor_client" not in st.session_state:
-    try:
-        st.session_state.model_armor_client = modelarmor_v1.ModelArmorClient(
-            transport="rest",
-            client_options={"api_endpoint": MODEL_ARMOR_ENDPOINT},
-        )
-    except Exception as e:
-        st.error(f"Failed to initialize Model Armor client: {e}")
-        st.stop()
-
-# Initialise OpenAI client if API key available
-if model_provider[model] == "OpenAI":
-    if st.session_state.openai_api_key:
-        current_openai_api_key = getattr(st.session_state.get("openai_client"), 'api_key', None)
-        if "openai_client" not in st.session_state or (current_openai_api_key != st.session_state.openai_api_key):
-            try:
-                st.session_state.openai_client = OpenAI(api_key=st.session_state.openai_api_key)
-            except Exception as e:
-                st.error(f"Failed to initialize OpenAI client: {e}")
-                st.stop()
-
-# Initialise session state for chat messages
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if endpoint != st.session_state.endpoint:
+    reset_clients()
+    st.session_state.endpoint = endpoint
 
 # Print readable match state message
 def get_match_state_message(match_state):
@@ -199,73 +185,127 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # User-Assistant chat interaction
-if st.session_state.vertex_client and st.session_state.model_armor_client:
-    if prompt := st.chat_input("Ask anything"):
-        with st.chat_message("user"):
-            st.markdown(prompt)
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            
-        if sanitize_request:
+if prompt := st.chat_input("Ask anything"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    if (provider in ["Google", "Anthropic"]):
+        if not st.session_state.project_id.strip() or not st.session_state.location.strip():
+            st.error("Please provide Google Cloud Project ID.")
+            reset_clients()
+            st.stop()
+    elif (provider == "OpenAI" and not st.session_state.openai_api_key):
+        st.error("Please provide the OpenAI API key.")
+        st.session_state.model = None
+        st.stop()
+    
+    if provider == "Google" and ("vertex_client" not in st.session_state or st.session_state.get("model") != model):
+        try:
+            vertexai.init(project=st.session_state.project_id, location=st.session_state.location)
+            st.session_state.vertex_client = genai.GenerativeModel(model)
+            st.session_state.model = model
+        except Exception as e:
+            st.error(f"Failed to initialize Vertex AI client: {e}")
+            st.stop()
+    
+    if provider == "Anthropic" and ("anthropic_client" not in st.session_state or st.session_state.get("model") != model):
+        try:
+            st.session_state.anthropic_client = AnthropicVertex(project_id=st.session_state.project_id, region=selected_model.get("location"))
+            st.session_state.model = model
+        except Exception as e:
+            st.error(f"Failed to initialize Anthropic client: {e}")
+            st.stop()
+
+    if provider == "OpenAI" and ("openai_client" not in st.session_state or st.session_state.get("model") != model):
             try:
+                st.session_state.openai_client = OpenAI(api_key=st.session_state.openai_api_key)
+                st.session_state.model = model
+            except Exception as e:
+                st.error(f"Failed to initialize OpenAI client: {e}")
+                st.stop()
+
+    if (sanitize_request or sanitize_response) and "model_armor_client" not in st.session_state:
+        try:
+            st.session_state.model_armor_client = modelarmor_v1.ModelArmorClient(
+                transport="rest",
+                client_options={"api_endpoint": endpoint},
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize Model Armor client: {e}")
+            st.stop()
+
+    with st.chat_message("user"):
+        st.markdown(prompt)
+        
+    if sanitize_request:
+        try:
+            with st.spinner("Analysing prompt request..."):    
                 prompt_data = modelarmor_v1.DataItem(text=prompt)
                 request = modelarmor_v1.SanitizeUserPromptRequest(
-                    name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{TEMPLATE_ID}",
+                    name=f"projects/{st.session_state.project_id}/locations/{st.session_state.location}/templates/{template_id}",
                     user_prompt_data=prompt_data,
                 )
                 response = st.session_state.model_armor_client.sanitize_user_prompt(request=request)
                 
-                if response.sanitization_result.filter_match_state == 2:
-                    with st.container(border=True):
-                        print_results(response)
-                    with st.expander("Sanitised prompt request (raw)", expanded=False):
-                        with st.container(height=300, border=True):
-                            st.write(response)
-                    st.stop()
-            except Exception as e:
-                st.error(f"Model Armor error: {e}")
+            if response.sanitization_result.filter_match_state == 2:
+                with st.container(border=True):
+                    print_results(response)
+                with st.expander("Sanitised prompt request (raw)", expanded=False):
+                    with st.container(height=300, border=True):
+                        st.write(response)
+                st.stop()
+        
+        except Exception as e:
+            st.error(f"Model Armor error during request sanitisation: {e}")
+            st.stop()
 
-        # Assistant response
-        with st.chat_message("assistant"):
-            if model_provider[model] == "Vertex AI":
-                try:
+    # Assistant response
+    with st.chat_message("assistant"):
+        with st.spinner("Generating response..."):
+            try:
+                if provider == "Google":
                     response = st.session_state.vertex_client.generate_content(prompt)
                     model_response = response.text
-                except Exception as e:
-                    st.error(f"Vertex AI error: {e}")
-            elif model_provider[model] == "OpenAI":
-                if not st.session_state.openai_api_key:
-                    st.error("Please provide your OpenAI API key.")
-                    st.stop()              
-                try:
+                elif provider == "Anthropic":
+                    response = st.session_state.anthropic_client.messages.create(
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=1024
+                    )
+                    model_response = response.content[0].text
+                elif provider == "OpenAI":
                     response = st.session_state.openai_client.chat.completions.create(
                         model=model,
                         messages=[{"role": "user", "content": prompt}]
                     )
-                    model_response = response.choices[0].message.content
-                except Exception as e:
-                    st.error(f"OpenAI error: {e}")
-                    st.stop()
+                    model_response = response.choices[0].message.content     
+            except Exception as e:
+                st.error(f"Error while generating LLM response: {e}")
+                st.stop()
+                
+        st.markdown(model_response)
+        st.session_state.messages.append({"role": "assistant", "content": model_response})
 
-            st.markdown(model_response)
-            st.session_state.messages.append({"role": "assistant", "content": model_response})
-
-        if sanitize_response:
-            with st.spinner("Analysing model response..."):
-                try:
-                    TEMPLATE_ID = "ma-all-low"
-                    model_data = modelarmor_v1.DataItem(text=model_response.text)
-                    request = modelarmor_v1.SanitizeModelResponseRequest(
-                        name=f"projects/{GOOGLE_CLOUD_PROJECT_ID}/locations/{GOOGLE_CLOUD_LOCATION}/templates/{TEMPLATE_ID}",
-                        model_response_data=model_data,
-                    )
-                    response = st.session_state.model_armor_client.sanitize_model_response(request=request)
-                    
-                    if response.sanitization_result.filter_match_state == 2:
-                        with st.container(border=True):
-                            print_results(response)
-                        with st.expander("Sanitised model response (raw)", expanded=False):
-                            with st.container(height=300, border=True):
-                                st.write(response)
-                        st.stop()
-                except Exception as e:
-                    st.error(f"Model Armor error: {e}")
+    if sanitize_response:
+        try:
+            with st.spinner("Analysing model response..."):    
+                response_template_id = "ma-all-low"
+                model_data = modelarmor_v1.DataItem(text=model_response)
+                request = modelarmor_v1.SanitizeModelResponseRequest(
+                    name=f"projects/{st.session_state.project_id}/locations/{st.session_state.location}/templates/{response_template_id}",
+                    model_response_data=model_data,
+                )
+                response = st.session_state.model_armor_client.sanitize_model_response(request=request)
+                
+            if response.sanitization_result.filter_match_state == 2:
+                with st.container(border=True):
+                    print_results(response)
+                with st.expander("Sanitised model response (raw)", expanded=False):
+                    with st.container(height=300, border=True):
+                        st.write(response)
+                st.stop()
+        
+        except Exception as e:
+            st.error(f"Model Armor error during response sanitisation: {e}")
+            st.stop()
+    
+    st.rerun()
