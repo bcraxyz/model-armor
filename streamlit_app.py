@@ -66,7 +66,7 @@ with st.sidebar:
         creds_file = st.file_uploader("**Google Cloud credentials file**", type="json") 
 
         if provider == "OpenAI":
-            st.text_input("OpenAI API key", type="password", key="openai_api_key")
+            st.text_input("**OpenAI API key**", type="password", key="openai_api_key")
         
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
         with st.expander("**⚙️ Project Settings**", expanded=True):
