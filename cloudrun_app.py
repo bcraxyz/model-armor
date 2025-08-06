@@ -12,7 +12,8 @@ from openai import OpenAI
 # "Prompt injection and jailbreak - high only": "ma-pijb-high"
 # "Prompt injection and jailbreak - medium and above": "ma-pijb-med"
 # "Prompt injection and jailbreak - low and above": "ma-pijb-low"
-# "Sensitive data protection - basic only": "ma-sdp-basic"
+# "Sensitive data protection - inspect": "ma-sdp-inspect"
+# "Sensitive data protection - de-identify": "ma-sdp-deid"
 # "Malicious URL detection - only": "ma-mal-url"
 # "Responsible AI - high only": "ma-rai-high"
 # "Responsible AI - medium and above": "ma-rai-med"
@@ -43,6 +44,8 @@ if "endpoint" not in st.session_state:
     st.session_state.endpoint = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "deid_data" not in st.session_state:
+    st.session_state.deid_data = None
 
 def reset_clients():
     st.session_state.pop("vertex_client", None)
@@ -57,7 +60,7 @@ st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_s
 with st.sidebar:
     st.title("🛡️ Model Armor Demo")
     with st.expander("**⚙️ Model Settings**", expanded=False):
-        selected_model = st.selectbox("Model", options=model_options, format_func=lambda m: m["display_name"])
+        selected_model = st.selectbox("**Model**", options=model_options, format_func=lambda m: m["display_name"])
         model = selected_model["name"]
         provider = selected_model["provider"]
 
@@ -81,7 +84,8 @@ with st.sidebar:
                     "**Detection type**",
                     [
                         "Malicious URLs",
-                        "Sensitive data protection",
+                        "Sensitive data protection (inspect)",
+                        "Sensitive data protection (de-identify)",
                         "Prompt injection and jailbreak",
                         "Responsible AI",
                         "All of the above"
@@ -101,8 +105,10 @@ with st.sidebar:
             # Map detection_type and confidence_level to templates
             if detection_type == "Malicious URLs":
                 template_id = "ma-mal-url"
-            elif detection_type == "Sensitive data protection":
-                template_id = "ma-sdp-basic"
+            elif detection_type == "Sensitive data protection (inspect)":
+                template_id = "ma-sdp-inspect"
+            elif detection_type == "Sensitive data protection (de-identify)":
+                template_id = "ma-sdp-deid"
             elif detection_type == "Prompt injection and jailbreak":
                 if confidence_level == "High only":
                     template_id = "ma-pijb-high"
@@ -147,7 +153,11 @@ def get_match_state_message(match_state):
 
 def print_results(response):
     if "sdp" in response.sanitization_result.filter_results:
-        sdp_match_state = response.sanitization_result.filter_results["sdp"].sdp_filter_result.inspect_result.match_state
+        if "inspect_result" in response.sanitization_result.filter_results["sdp"].sdp_filter_result:
+            sdp_match_state = response.sanitization_result.filter_results["sdp"].sdp_filter_result.inspect_result.match_state
+        elif "deidentify_result" in response.sanitization_result.filter_results["sdp"].sdp_filter_result:
+            sdp_match_state = response.sanitization_result.filter_results["sdp"].sdp_filter_result.deidentify_result.match_state
+            st.session_state.deid_data = response.sanitization_result.filter_results["sdp"].sdp_filter_result.deidentify_result.data.text
     else:
         sdp_match_state = None
     if "pi_and_jailbreak" in response.sanitization_result.filter_results:
@@ -249,6 +259,10 @@ if prompt := st.chat_input("Ask anything"):
             if response.sanitization_result.filter_match_state == 2:
                 with st.container(border=True):
                     print_results(response)
+                if st.session_state.deid_data:
+                    with st.expander("De-identified prompt", expanded=False):
+                        st.write(st.session_state.deid_data)
+                        st.session_state.deid_data = None
                 with st.expander("Sanitised prompt request (raw)", expanded=False):
                     with st.container(height=300, border=True):
                         st.write(response)
