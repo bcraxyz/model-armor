@@ -65,11 +65,11 @@ with st.sidebar:
         provider = selected_model["provider"]
 
         if provider == "OpenAI":
-            st.text_input("**OpenAI API key**", type="password", key="openai_api_key")
+            st.text_input("**OpenAI API key**", type="password", value=st.session_state.openai_api_key, key="openai_api_key")
     
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
-        with st.expander("**⚙️ Project Settings**", expanded=True):
-            project_id = st.text_input("**Project ID**")
+        with st.expander("**⚙️ Project Settings**", expanded=False):
+            project_id = st.text_input("**Project ID**", value=st.session_state.project_id)
             selected_location = st.selectbox("**Location**", options=model_armor_endpoints, format_func=lambda m: m["location"])
             location = selected_location["location"]
             endpoint = selected_location["endpoint"]
