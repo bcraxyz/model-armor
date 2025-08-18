@@ -278,8 +278,8 @@ if prompt := st.chat_input("Ask anything"):
                 with st.container(border=True):
                     print_results(response)
                 if st.session_state.deid_data:
-                    with st.expander("De-identified prompt", expanded=False):
-                        st.write(st.session_state.deid_data)
+                    with st.expander("De-identified prompt", expanded=True):
+                        st.warning(st.session_state.deid_data)
                         st.session_state.deid_data = None
                 with st.expander("Sanitised prompt request (raw)", expanded=False):
                     with st.container(height=300, border=True):
