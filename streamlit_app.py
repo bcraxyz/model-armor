@@ -3,6 +3,8 @@ import vertexai.generative_models as genai
 from google.cloud import modelarmor_v1
 from anthropic import AnthropicVertex
 from openai import OpenAI
+from pypdf import PdfReader
+from docx import Document
 
 # Ensure the following Model Armor templates are available in the specified Google Cloud project
 # "None": "none"
@@ -72,13 +74,13 @@ with st.sidebar:
             st.text_input("**OpenAI API key**", type="password", value=st.session_state.openai_api_key, key="openai_api_key")
         
     with st.expander("**⚙️ Model Armor Settings**", expanded=True):
-        with st.expander("**⚙️ Project Settings**", expanded=False):
+        with st.expander("**Project Settings**", expanded=False):
             project_id = st.text_input("**Project ID**", value=st.session_state.project_id)
             selected_location = st.selectbox("**Location**", options=model_armor_endpoints, format_func=lambda m: m["location"])
             location = selected_location["location"]
             endpoint = selected_location["endpoint"]
         
-        with st.expander("**⚙️ Detection Settings**", expanded=True):
+        with st.expander("**Detection Settings**", expanded=True):
             detection_type = None
             confidence_level = None
             sanitize_request = st.checkbox("Sanitize prompt request?")
@@ -209,9 +211,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # User-Assistant chat interaction
-if prompt := st.chat_input("Ask anything"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-
+if prompt := st.chat_input("Ask anything", accept_file=True, file_type=["pdf", "csv", "txt", "docx"]):
     if (provider in ["Google", "Anthropic"]):
         if not st.session_state.google_creds:
             st.error("Please upload the Google Cloud credentials file.")
@@ -261,13 +261,37 @@ if prompt := st.chat_input("Ask anything"):
             st.error(f"Failed to initialize Model Armor client: {e}")
             st.stop()
 
+    file_text, file_display = None, ""
+    if prompt and prompt["files"]:
+        uploaded_file = prompt["files"][0]
+        file_display = f"\n\nFile attached: {uploaded_file.name}"
+        ext = uploaded_file.name.split(".")[-1].lower()
+
+        if ext in ["txt", "csv"]:
+            file_text = uploaded_file.read().decode("utf-8")
+        elif ext == "pdf":
+            reader = PdfReader(uploaded_file)
+            file_text = "\n".join(
+                page.extract_text() for page in reader.pages if page.extract_text()
+            )
+        elif ext == "docx":
+            doc = Document(uploaded_file)
+            file_text = "\n".join(p.text for p in doc.paragraphs)
+        
+    full_prompt = prompt.text or ""
+    if file_text:
+        full_prompt += f"\n\n[File Content]\n{file_text}"
+
     with st.chat_message("user"):
-        st.markdown(prompt)
+        display_text = (prompt.text or "") + file_display
+        st.markdown(display_text)
+
+    st.session_state.messages.append({"role": "user", "content": (prompt.text or "") + file_display})
         
     if sanitize_request:
         try:
             with st.spinner("Analysing prompt request..."):    
-                prompt_data = modelarmor_v1.DataItem(text=prompt)
+                prompt_data = modelarmor_v1.DataItem(text=full_prompt)
                 request = modelarmor_v1.SanitizeUserPromptRequest(
                     name=f"projects/{st.session_state.project_id}/locations/{st.session_state.location}/templates/{template_id}",
                     user_prompt_data=prompt_data,
@@ -293,31 +317,32 @@ if prompt := st.chat_input("Ask anything"):
 
     # Assistant response
     with st.chat_message("assistant"):
-        with st.spinner("Generating response..."):
-            try:
+        try:
+            with st.spinner("Generating response..."):
                 if provider == "Google":
-                    response = st.session_state.vertex_client.generate_content(prompt)
+                    response = st.session_state.vertex_client.generate_content(full_prompt)
                     model_response = response.text
                 elif provider == "Anthropic":
                     response = st.session_state.anthropic_client.messages.create(
                         model=model,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[{"role": "user", "content": full_prompt}],
                         max_tokens=1024
                     )
                     model_response = response.content[0].text
                 elif provider == "OpenAI":
                     response = st.session_state.openai_client.chat.completions.create(
                         model=model,
-                        messages=[{"role": "user", "content": prompt}]
+                        messages=[{"role": "user", "content": full_prompt}]
                     )
                     model_response = response.choices[0].message.content     
             
-            except Exception as e:
-                st.error(f"Error while generating LLM response: {e}")
-                st.stop()
-                
-        st.markdown(model_response)
-        st.session_state.messages.append({"role": "assistant", "content": model_response})
+            st.markdown(model_response)
+            st.session_state.messages.append({"role": "assistant", "content": model_response})
+        
+        except Exception as e:
+            st.error(f"Error generating LLM response: {e}")
+            st.session_state.messages.append({"role": "assistant", "content": e})
+            st.stop()
 
     if sanitize_response:
         try:
