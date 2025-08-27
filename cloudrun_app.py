@@ -6,7 +6,7 @@ from openai import OpenAI
 from pypdf import PdfReader
 from docx import Document
 
-# Ensure the following Model Armor templates are available in the specified Google Cloud project
+# Ensure the following Model Armor templates are available in the specified Google Cloud project for each location
 # "None": "none"
 # "All - high only": "ma-all-high"
 # "All - medium and above": "ma-all-med"
@@ -25,11 +25,12 @@ model_options = [
     {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "provider": "Google", "location": "global"},
     {"name": "gemini-2.5-flash-lite", "display_name": "Gemini 2.5 Flash Lite", "provider": "Google", "location": "global"},
     {"name": "claude-sonnet-4@20250514", "display_name": "Claude Sonnet 4", "provider": "Anthropic", "location": "us-east5"},
-    {"name": "gpt-4o-mini", "display_name": "GPT-4o mini", "provider": "OpenAI", "location": "global"},
+    {"name": "gpt-5-nano", "display_name": "GPT-5 nano", "provider": "OpenAI", "location": "global"},
 ]
 
 model_armor_endpoints = [
     {"location": "us-central1", "endpoint": "modelarmor.us-central1.rep.googleapis.com"},
+    {"location": "us-east1", "endpoint": "modelarmor.us-east1.rep.googleapis.com"},
     {"location": "asia-southeast1", "endpoint": "modelarmor.asia-southeast1.rep.googleapis.com"},
 ]
 
