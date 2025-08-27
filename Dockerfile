@@ -26,4 +26,4 @@ USER appuser
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "./cloudrun_app.py", "--server.port=8501"]
+CMD ["streamlit", "run", "./cloudrun_app.py", "--server.port=8501", "--server.enableXsrfProtection=false"]
