@@ -7,6 +7,7 @@ they obtain Google Cloud credentials; everything else lives here.
 import hashlib
 import io
 import os
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -29,7 +30,11 @@ MODEL_OPTIONS = [
 CLAUDE_MAX_TOKENS = 1024
 
 # Model Armor templates are regional; sanitize calls must target the template's region.
-MODEL_ARMOR_LOCATIONS = ["us-central1", "us-east1", "asia-southeast1"]
+# Defaults to us-central1, which supports every filter this demo offers (asia-southeast1,
+# for example, lacks malicious URL, CSAM and multi-language detection). Override with
+# GOOGLE_CLOUD_LOCATION, e.g. "us-east1" or the "us"/"eu" multi-regions.
+DEFAULT_MODEL_ARMOR_LOCATION = "us-central1"
+_LOCATION_PATTERN = re.compile(r"[a-z]+(-[a-z]+[0-9]+)?")
 
 # Detection type -> (template ID or prefix, whether a confidence level is appended).
 # Ensure these templates exist in the selected Model Armor location, e.g. "ma-pijb-high".
@@ -145,9 +150,13 @@ def _openai_api_key() -> str:
     return st.text_input("**OpenAI API key**", type="password")
 
 
-def _default_location_index() -> int:
-    env_location = os.getenv("GOOGLE_CLOUD_LOCATION", "")
-    return MODEL_ARMOR_LOCATIONS.index(env_location) if env_location in MODEL_ARMOR_LOCATIONS else 0
+def _model_armor_location() -> str:
+    location = os.getenv("GOOGLE_CLOUD_LOCATION", "").strip() or DEFAULT_MODEL_ARMOR_LOCATION
+    # The location becomes part of the endpoint hostname, so accept only location-shaped values.
+    if not _LOCATION_PATTERN.fullmatch(location):
+        st.error(f"Invalid GOOGLE_CLOUD_LOCATION {location!r}; using {DEFAULT_MODEL_ARMOR_LOCATION}.")
+        location = DEFAULT_MODEL_ARMOR_LOCATION
+    return location
 
 
 def _template_id(detection_type: str, confidence_level: Optional[str]) -> str:
@@ -328,7 +337,8 @@ def run(auth_ui: Callable[[], GoogleAuth]) -> None:
         with st.expander("**⚙️ Model Armor Settings**", expanded=True):
             with st.expander("**Project Settings**", expanded=False):
                 auth = auth_ui()
-                location = st.selectbox("**Location**", options=MODEL_ARMOR_LOCATIONS, index=_default_location_index())
+                location = _model_armor_location()
+                st.text_input("**Location**", value=location, disabled=True, help="Set by the GOOGLE_CLOUD_LOCATION environment variable.")
 
             with st.expander("**Detection Settings**", expanded=True):
                 template_id = None
