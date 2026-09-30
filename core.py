@@ -265,12 +265,18 @@ def _sanitize_response(client, template_path: str, text: str):
     return client.sanitize_model_response(request=request)
 
 
+def _quote(text: str) -> str:
+    return "\n".join(f"> {line}  " for line in text.splitlines())  # trailing spaces keep line breaks
+
+
 def _render_findings(heading: str, flagged: list) -> str:
     """Render flagged scans inside the current container and return a markdown record."""
     sections = [heading]
     for label, response in flagged:
-        summary, _ = _summarise(response.sanitization_result)
+        summary, deid_text = _summarise(response.sanitization_result)
         sections.append(f"**{label}**\n\n{summary}")
+        if deid_text:
+            sections.append(f"**De-identified prompt** (not sent to the model)\n\n{_quote(deid_text)}")
     record = "\n\n".join(sections)
     st.markdown(record)
     for label, response in flagged:
@@ -323,6 +329,17 @@ def _generate(model: dict, auth: GoogleAuth, openai_key: str, prompt: str) -> st
 # App
 # ---------------------------------------------------------------------------
 
+MODEL_ARMOR_ROLE = "model_armor"
+FLAGGED_RESPONSE_BANNER = "⚠️ *Flagged by Model Armor — shown here for demonstration. See the findings below.*"
+
+
+def _chat_message(role: str):
+    # Model Armor verdicts get their own bubble so they are never mistaken for the model's output.
+    if role == MODEL_ARMOR_ROLE:
+        return st.chat_message("Model Armor", avatar="🛡️")
+    return st.chat_message(role)
+
+
 def run(auth_ui: Callable[[], GoogleAuth]) -> None:
     """Render the app. `auth_ui` draws the credential/project inputs and returns them."""
     st.set_page_config(page_title="Model Armor Demo", page_icon="🛡️", initial_sidebar_state="auto")
@@ -352,7 +369,7 @@ def run(auth_ui: Callable[[], GoogleAuth]) -> None:
                 sanitize_response = st.checkbox("Sanitize model response?", help=f"Uses the `{RESPONSE_TEMPLATE_ID}` template")
 
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
+        with _chat_message(message["role"]):
             st.markdown(message["content"])
 
     prompt = st.chat_input(
@@ -423,46 +440,46 @@ def run(auth_ui: Callable[[], GoogleAuth]) -> None:
 
         flagged = [(label, response) for label, response in results if _is_match(response)]
         if flagged:
-            with st.chat_message("assistant"):
-                record = _render_findings(f"🚨 **Blocked by Model Armor** (template `{template_id}`)", flagged)
-                deid_text = next(
-                    (text for _, response in flagged if (text := _summarise(response.sanitization_result)[1])),
-                    None,
-                )
-                if deid_text:
-                    with st.expander("De-identified prompt", expanded=True):
-                        st.warning(deid_text)
-            st.session_state.messages.append({"role": "assistant", "content": record})
-            if deid_text:
-                st.session_state.messages.append({"role": "assistant", "content": deid_text})
+            with _chat_message(MODEL_ARMOR_ROLE):
+                record = _render_findings(f"🚨 **Prompt blocked** (template `{template_id}`)", flagged)
+            st.session_state.messages.append({"role": MODEL_ARMOR_ROLE, "content": record})
             st.stop()
 
     # Model response
-    with st.chat_message("assistant"):
-        try:
-            with st.spinner("Generating response..."):
-                model_response = _generate(model, auth, openai_key, full_prompt)
-        except Exception as e:
-            error_text = f"Error generating LLM response: {e}"
+    try:
+        with st.spinner("Generating response..."):
+            model_response = _generate(model, auth, openai_key, full_prompt)
+    except Exception as e:
+        error_text = f"Error generating LLM response: {e}"
+        with st.chat_message("assistant"):
             st.error(error_text)
-            st.session_state.messages.append({"role": "assistant", "content": error_text})
-            st.stop()
-        st.markdown(model_response)
-    st.session_state.messages.append({"role": "assistant", "content": model_response})
+        st.session_state.messages.append({"role": "assistant", "content": error_text})
+        st.stop()
 
-    # Response sanitisation
+    # Response sanitisation happens before the response is shown, so a flagged
+    # response is labelled as such from the moment it appears.
+    scan, scan_error = None, None
     if sanitize_response:
         try:
             with st.spinner("Analysing model response..."):
-                response = _sanitize_response(armor, f"{template_base}/{RESPONSE_TEMPLATE_ID}", model_response)
+                scan = _sanitize_response(armor, f"{template_base}/{RESPONSE_TEMPLATE_ID}", model_response)
         except Exception as e:
-            st.error(f"Model Armor error during response sanitisation: {e}")
-            st.stop()
+            scan_error = f"Model Armor error during response sanitisation: {e}"
 
-        if _is_match(response):
-            with st.chat_message("assistant"):
-                record = _render_findings(
-                    f"⚠️ **Model response flagged by Model Armor** (template `{RESPONSE_TEMPLATE_ID}`)",
-                    [("Model response", response)],
-                )
-            st.session_state.messages.append({"role": "assistant", "content": record})
+    response_flagged = scan is not None and _is_match(scan)
+    shown_response = f"{FLAGGED_RESPONSE_BANNER}\n\n{model_response}" if response_flagged else model_response
+    with st.chat_message("assistant"):
+        st.markdown(shown_response)
+    st.session_state.messages.append({"role": "assistant", "content": shown_response})
+
+    if scan_error:
+        st.error(scan_error)
+        st.stop()
+
+    if response_flagged:
+        with _chat_message(MODEL_ARMOR_ROLE):
+            record = _render_findings(
+                f"⚠️ **Model response flagged** (template `{RESPONSE_TEMPLATE_ID}`)",
+                [("Model response", scan)],
+            )
+        st.session_state.messages.append({"role": MODEL_ARMOR_ROLE, "content": record})
